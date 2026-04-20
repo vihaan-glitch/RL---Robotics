@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtualenvs
+.venv/
+venv*/
+env/
+
+# Training artefacts (large, regenerable)
+models/
+logs/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
