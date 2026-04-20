@@ -4,11 +4,11 @@ A reinforcement learning project that trains a simulated robotic arm to reach ra
 
 ## Overview
 
-This project uses a custom Gymnasium environment built on PyBullet to simulate a **KUKA iiwa robotic arm**. The agent learns to control the arm's joints to reach randomly placed 3D target points, trained entirely from scratch using PPO from Stable-Baselines3.
+This project uses a custom Gymnasium environment built on MuJoCo to simulate a **KUKA iiwa robotic arm**. The agent learns to control the arm's joints to reach randomly placed 3D target points, trained entirely from scratch using PPO from Stable-Baselines3.
 
 ## Demo
 
-The trained agent controls a 7-DOF robotic arm in a physics simulation, learning to minimize the distance between the end-effector and a target (shown as a red sphere).
+The trained agent controls a 7-DOF robotic arm in a MuJoCo physics simulation, learning to minimize the distance between the end-effector and a randomly placed target.
 
 ## Project Structure
 
@@ -81,7 +81,7 @@ This loads the trained model and runs it in the GUI-rendered simulation so you c
 ## Dependencies
 
 - [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3) — PPO implementation
-- [PyBullet](https://pybullet.org/) — Physics simulation
+- [MuJoCo](https://mujoco.org/) — Physics simulation
 - [Gymnasium](https://gymnasium.farama.org/) — RL environment interface
 - [NumPy](https://numpy.org/)
 
@@ -90,6 +90,7 @@ This loads the trained model and runs it in the GUI-rendered simulation so you c
 - Observation and reward normalization is applied via `VecNormalize` for training stability
 - Entropy coefficient (`ent_coef=0.01`) encourages exploration early in training
 - The `__pycache__` folder can be safely added to `.gitignore`
+- MuJoCo requires a valid installation — see [MuJoCo installation guide](https://mujoco.readthedocs.io/en/stable/python.html)
 
 ## Future Ideas
 
