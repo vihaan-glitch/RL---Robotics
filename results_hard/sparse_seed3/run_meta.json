@@ -1,0 +1,8 @@
+{
+  "reward_mode": "sparse",
+  "seed": 3,
+  "task_difficulty": "hard",
+  "obstacle_mode": "simple",
+  "timesteps": 500000,
+  "duration_seconds": 193.2
+}

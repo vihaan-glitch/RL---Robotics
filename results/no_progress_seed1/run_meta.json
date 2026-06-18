@@ -1,0 +1,6 @@
+{
+  "reward_mode": "no_progress",
+  "seed": 1,
+  "timesteps": 500000,
+  "duration_seconds": 147.6
+}

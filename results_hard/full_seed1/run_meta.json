@@ -1,0 +1,8 @@
+{
+  "reward_mode": "full",
+  "seed": 1,
+  "task_difficulty": "hard",
+  "obstacle_mode": "simple",
+  "timesteps": 500000,
+  "duration_seconds": 195.0
+}

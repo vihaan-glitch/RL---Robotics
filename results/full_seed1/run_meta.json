@@ -1,0 +1,6 @@
+{
+  "reward_mode": "full",
+  "seed": 1,
+  "timesteps": 500000,
+  "duration_seconds": 150.5
+}

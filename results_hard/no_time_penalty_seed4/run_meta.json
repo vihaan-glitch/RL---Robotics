@@ -1,0 +1,8 @@
+{
+  "reward_mode": "no_time_penalty",
+  "seed": 4,
+  "task_difficulty": "hard",
+  "obstacle_mode": "simple",
+  "timesteps": 500000,
+  "duration_seconds": 185.8
+}

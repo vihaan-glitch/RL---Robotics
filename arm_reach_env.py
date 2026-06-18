@@ -11,7 +11,9 @@ Action (7 dims):
   Normalised joint position targets in [-1, 1].
 
 Reward:
-  Dense shaped: distance_reward + progress_reward + success_bonus + time_penalty
+  Configurable via the `reward_mode` constructor argument (see REWARD_MODES).
+  The default "full" mode is the original dense-shaped reward:
+      distance_reward + progress_reward + success_bonus + time_penalty
 
 Cost (safety signal):
   Binary per-step: 1 if any joint torque exceeds TORQUE_LIMIT, else 0.
@@ -39,6 +41,61 @@ COST_LIMIT   = 25     # Maximum allowed cumulative cost per episode
 
 # Policy step = SIM_SUBSTEPS × model timestep (0.002 s) = 0.02 s → 50 Hz
 SIM_SUBSTEPS = 10
+
+# ── Reward modes (for reward-ablation study) ──────────────────────────────────
+# Each mode toggles which of the four reward terms are summed into the final
+# per-step reward. All other environment logic (termination, randomization,
+# observation/action spaces) is identical across modes — only the reward
+# computation changes. See ArmReachEnv._compute_reward for the term definitions.
+#
+#   distance : distance_reward = -distance               (dense distance penalty)
+#   progress : progress_reward = 10 * (prev_d - d)       (dense shaping)
+#   success  : success_bonus   = +100 if distance < 0.05 (terminal-style bonus)
+#   time     : time_penalty    = -0.01 per step          (encourages speed)
+REWARD_MODES = {
+    "full":            ("distance", "progress", "success", "time"),
+    "sparse":          ("success",),
+    "no_progress":     ("distance", "success", "time"),
+    "no_time_penalty": ("distance", "progress", "success"),
+    "distance_only":   ("distance",),
+}
+
+# ── Obstacles (for the hard-task ablation) ────────────────────────────────────
+# Three fixed static boxes placed in the frontal workspace. Their positions are
+# chosen so that a naive straight-line reach from a typical initial joint
+# configuration toward many targets would pass through a box — forcing the policy
+# to learn a more deliberate, curved trajectory. Targets are resampled away from
+# the boxes (see ArmReachEnv._target_clear) so the goal itself is always in free
+# space and remains reachable; only the *path* is obstructed.
+#
+# Each entry: (name, center (x, y, z), half-size (x, y, z))  — MuJoCo box `size`
+# is the half-extent along each axis.
+SIMPLE_OBSTACLES = [
+    ("obstacle0", (0.35,  0.00, 0.42), (0.04, 0.18, 0.16)),  # central vertical slab
+    ("obstacle1", (0.30, -0.26, 0.28), (0.09, 0.06, 0.18)),  # low side block
+    ("obstacle2", (0.46,  0.22, 0.60), (0.12, 0.10, 0.04)),  # high shelf
+]
+
+# Reward penalty applied once per policy step in which the arm contacts any
+# obstacle (binary, not per-contact-point — keeps the penalty bounded). Applied
+# uniformly across all reward modes, since collision avoidance is a property of
+# the harder *task*, not one of the reward-shaping terms under ablation.
+COLLISION_PENALTY = -10.0
+
+VALID_OBSTACLE_MODES = (None, "simple")
+
+
+def _obstacle_xml(obstacle_mode: str | None) -> str:
+    """Return the MuJoCo geom XML for the requested obstacle mode (empty if None)."""
+    if obstacle_mode is None:
+        return ""
+    geoms = [
+        f'<geom name="{name}" type="box" pos="{px} {py} {pz}" '
+        f'size="{sx} {sy} {sz}" rgba="0.40 0.40 0.48 1"/>'
+        for name, (px, py, pz), (sx, sy, sz) in SIMPLE_OBSTACLES
+    ]
+    return "\n      ".join(geoms)
+
 
 # ── MuJoCo model (7-DOF Kuka-style arm) ──────────────────────────────────────
 _ARM_XML = """
@@ -120,6 +177,9 @@ _ARM_XML = """
       <geom type="sphere" size="0.05" rgba="1 0 0 0.5"
             contype="0" conaffinity="0"/>
     </body>
+
+    <!-- Static obstacles injected here at build time (empty unless obstacle_mode). -->
+      <!-- OBSTACLES -->
   </worldbody>
 
   <!-- PD position servos. kv adds derivative damping: force = kp*(ctrl-pos) - kv*vel.
@@ -147,20 +207,78 @@ class ArmReachEnv(gym.Env):
         "human"     → MuJoCo passive viewer (GUI)
         "rgb_array" → headless camera frames via mujoco.Renderer
         None        → fully headless (training)
+    reward_mode : str
+        Which reward terms are active. One of REWARD_MODES (default "full"):
+          "full"            distance + progress + success + time (original)
+          "sparse"          success bonus only (+100 at goal, 0 otherwise)
+          "no_progress"     distance + success + time (no shaping)
+          "no_time_penalty" distance + progress + success
+          "distance_only"   negated distance penalty only (no bonus/progress/time)
+        Only the reward computation changes between modes; all other dynamics
+        (termination, randomization, spaces) are held identical.
+    obstacle_mode : str | None
+        Controls static obstacles in the workspace (default None):
+          None       no obstacles — the original easy task.
+          "simple"   three fixed static box obstacles (see SIMPLE_OBSTACLES)
+                     placed in the frontal workspace so that naive straight-line
+                     reaches collide, forcing more deliberate trajectories.
+        With obstacles active:
+          * The arm physically collides with the boxes (real MuJoCo contacts).
+          * A COLLISION_PENALTY (-10) is added to the reward once per policy step
+            in which any arm link touches an obstacle. This penalty is applied
+            uniformly across ALL reward modes — collision avoidance is a property
+            of the harder task, not a reward-shaping term under ablation, so the
+            relative comparison between reward modes is preserved.
+          * Targets are resampled away from the boxes so the goal is always in
+            free space; only the path to it is obstructed.
+        The observation and action spaces are unchanged (obstacles are at fixed
+        positions, so a policy can learn to avoid them without observing them).
     """
 
     metadata = {"render_modes": ["human", "rgb_array"]}
 
-    def __init__(self, render_mode: str | None = None):
+    def __init__(self, render_mode: str | None = None, reward_mode: str = "full",
+                 obstacle_mode: str | None = None):
         super().__init__()
 
         self.render_mode = render_mode
 
+        if reward_mode not in REWARD_MODES:
+            raise ValueError(
+                f"Unknown reward_mode={reward_mode!r}. "
+                f"Expected one of {sorted(REWARD_MODES)}."
+            )
+        if obstacle_mode not in VALID_OBSTACLE_MODES:
+            raise ValueError(
+                f"Unknown obstacle_mode={obstacle_mode!r}. "
+                f"Expected one of {VALID_OBSTACLE_MODES}."
+            )
+        self.reward_mode = reward_mode
+        self._active_terms = REWARD_MODES[reward_mode]
+        self.obstacle_mode = obstacle_mode
+
         # ── Load MuJoCo model ─────────────────────────────────────────────────
-        self.model = mujoco.MjModel.from_xml_string(_ARM_XML)
+        xml = _ARM_XML.replace("<!-- OBSTACLES -->", _obstacle_xml(obstacle_mode))
+        self.model = mujoco.MjModel.from_xml_string(xml)
         self.data  = mujoco.MjData(self.model)
 
         self.num_controllable = self.model.nu  # 7
+
+        # ── Geom bookkeeping for collision detection ──────────────────────────
+        # Obstacle geoms by name; arm geoms = those on the base/link bodies.
+        self._obstacle_geom_ids: set[int] = set()
+        if obstacle_mode is not None:
+            for name, _, _ in SIMPLE_OBSTACLES:
+                gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
+                if gid >= 0:
+                    self._obstacle_geom_ids.add(gid)
+        self._arm_geom_ids: set[int] = set()
+        for gid in range(self.model.ngeom):
+            bname = mujoco.mj_id2name(
+                self.model, mujoco.mjtObj.mjOBJ_BODY, int(self.model.geom_bodyid[gid])
+            )
+            if bname and (bname.startswith("link") or bname == "base"):
+                self._arm_geom_ids.add(gid)
 
         # Joint limits from model
         self.joint_lower_limits = self.model.jnt_range[:, 0].astype(np.float32)
@@ -225,11 +343,8 @@ class ArmReachEnv(gym.Env):
         )
         self.data.qpos[:self.num_controllable] = init_pos
 
-        # Randomise target across reachable workspace
-        self.target_position = self.np_random.uniform(
-            low=[0.2, -0.4, 0.1],
-            high=[0.7,  0.4, 0.8],
-        ).astype(np.float32)
+        # Randomise target across reachable workspace (clear of obstacles).
+        self.target_position = self._sample_target()
         self.data.mocap_pos[self._target_mocap_id] = self.target_position
 
         # Recompute forward kinematics so site positions are valid immediately
@@ -242,6 +357,41 @@ class ArmReachEnv(gym.Env):
             self._viewer.sync()
 
         return obs, {}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    def _target_clear(self, t: np.ndarray, margin: float = 0.08) -> bool:
+        """True if target t is outside every obstacle's (expanded) bounding box."""
+        for _, (px, py, pz), (sx, sy, sz) in SIMPLE_OBSTACLES:
+            if (abs(t[0] - px) < sx + margin
+                    and abs(t[1] - py) < sy + margin
+                    and abs(t[2] - pz) < sz + margin):
+                return False
+        return True
+
+    def _sample_target(self) -> np.ndarray:
+        """Uniform target in the workspace; resampled to avoid obstacle volumes."""
+        low, high = [0.2, -0.4, 0.1], [0.7, 0.4, 0.8]
+        t = self.np_random.uniform(low=low, high=high).astype(np.float32)
+        if self.obstacle_mode is not None:
+            for _ in range(100):
+                if self._target_clear(t):
+                    break
+                t = self.np_random.uniform(low=low, high=high).astype(np.float32)
+        return t
+
+    def _count_obstacle_contacts(self) -> int:
+        """Number of active contact points between an arm link and an obstacle."""
+        if not self._obstacle_geom_ids:
+            return 0
+        n = 0
+        for i in range(self.data.ncon):
+            g1 = self.data.contact[i].geom1
+            g2 = self.data.contact[i].geom2
+            obs = ((g1 in self._obstacle_geom_ids and g2 in self._arm_geom_ids)
+                   or (g2 in self._obstacle_geom_ids and g1 in self._arm_geom_ids))
+            if obs:
+                n += 1
+        return n
 
     # ─────────────────────────────────────────────────────────────────────────
     def _get_obs(self) -> np.ndarray:
@@ -268,6 +418,35 @@ class ArmReachEnv(gym.Env):
         return float(np.any(np.abs(torques) > TORQUE_LIMIT))
 
     # ─────────────────────────────────────────────────────────────────────────
+    def _compute_reward(self, distance: float) -> float:
+        """
+        Reward = sum of the terms enabled by the active reward_mode.
+
+        Term definitions (all use `distance`, the current EE→target distance,
+        and `self.previous_distance` from the prior step):
+
+          distance : -distance               dense penalty pulling EE toward goal
+          progress : 10 * (prev_d - d)       dense shaping; positive when closing in
+          success  : +100 if distance < 0.05 large bonus for reaching the goal
+          time     : -0.01                   constant per-step penalty
+
+        Which terms are summed is fixed at construction time by `reward_mode`
+        (see REWARD_MODES). Modes never change termination, randomization, or
+        the observation/action spaces — only this scalar.
+        """
+        terms = self._active_terms
+        reward = 0.0
+        if "distance" in terms:
+            reward += -distance
+        if "progress" in terms:
+            reward += (self.previous_distance - distance) * 10.0
+        if "success" in terms:
+            reward += 100.0 if distance < 0.05 else 0.0
+        if "time" in terms:
+            reward += -0.01
+        return reward
+
+    # ─────────────────────────────────────────────────────────────────────────
     def step(self, action):
         self.step_count += 1
 
@@ -279,14 +458,18 @@ class ArmReachEnv(gym.Env):
         )
         self.data.ctrl[:] = target_positions
 
-        # Action repeat — accumulate cost across substeps
+        # Action repeat — accumulate cost and obstacle contacts across substeps
         substep_cost = 0.0
+        substep_contacts = 0
         for _ in range(SIM_SUBSTEPS):
             mujoco.mj_step(self.model, self.data)
             substep_cost += self._compute_cost()
+            substep_contacts += self._count_obstacle_contacts()
 
         # Binary cost for the whole policy step
         cost = float(substep_cost > 0)
+        # Binary collision flag for the whole policy step (any arm-obstacle contact)
+        collision = float(substep_contacts > 0)
 
         if self._viewer is not None:
             self._viewer.sync()
@@ -296,11 +479,11 @@ class ArmReachEnv(gym.Env):
         ee_position = obs[self._idx_ee]
 
         # ── Reward ────────────────────────────────────────────────────────────
-        distance_reward = -distance
-        progress_reward = (self.previous_distance - distance) * 10.0
-        success_bonus   = 100.0 if distance < 0.05 else 0.0
-        time_penalty    = -0.01
-        reward = distance_reward + progress_reward + success_bonus + time_penalty
+        # Reward-mode terms (the ablation variable) plus, on the hard task, a
+        # uniform collision penalty applied identically across all modes.
+        reward = self._compute_reward(distance)
+        if self.obstacle_mode is not None:
+            reward += COLLISION_PENALTY * collision
         self.previous_distance = distance
 
         terminated = bool(distance < 0.05)
@@ -311,6 +494,8 @@ class ArmReachEnv(gym.Env):
             "cost":        cost,
             "cost_limit":  COST_LIMIT,
             "ee_position": ee_position.tolist(),
+            "collision":   collision,
+            "n_contacts":  substep_contacts,
         }
 
         return obs, reward, terminated, truncated, info
