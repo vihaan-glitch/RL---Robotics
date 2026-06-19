@@ -1,0 +1,6 @@
+{
+  "reward_mode": "no_time_penalty",
+  "seed": 1,
+  "success_distance": 0.05,
+  "first_success_timestep": 8477
+}

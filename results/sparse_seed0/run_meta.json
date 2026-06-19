@@ -1,0 +1,6 @@
+{
+  "reward_mode": "sparse",
+  "seed": 0,
+  "timesteps": 500000,
+  "duration_seconds": 185.8
+}

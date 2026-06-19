@@ -1,0 +1,6 @@
+{
+  "reward_mode": "no_time_penalty",
+  "seed": 0,
+  "timesteps": 500000,
+  "duration_seconds": 144.0
+}

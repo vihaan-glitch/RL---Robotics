@@ -1,0 +1,6 @@
+{
+  "reward_mode": "distance_only",
+  "seed": 0,
+  "timesteps": 500000,
+  "duration_seconds": 140.4
+}

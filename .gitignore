@@ -16,6 +16,17 @@ env/
 models/
 logs/
 
+# Heavy per-run artefacts inside results dirs (regenerable from training).
+# The small numeric results (*.csv, *.json, evaluations.npz) ARE tracked.
+results*/**/final_model.zip
+results*/**/best_model/
+results*/**/vec_normalize.pkl
+results*/**/tensorboard/
+
+# Ablation training console logs (regenerable)
+results_ablation_*.log
+MUJOCO_LOG.TXT
+
 # Editor / OS
 .DS_Store
 *.swp

@@ -1,0 +1,6 @@
+{
+  "reward_mode": "sparse",
+  "seed": 2,
+  "success_distance": 0.05,
+  "first_success_timestep": null
+}
